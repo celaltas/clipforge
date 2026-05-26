@@ -1,3 +1,10 @@
+mod config;
+mod logging;
+mod storage;
+
+use config::loader::load_settings;
+use storage::sqlite::initialize_database;
+
 use gpui::*;
 use gpui_component::{button::*, *};
 
@@ -22,6 +29,18 @@ impl Render for HelloWorld {
 }
 
 fn main() {
+    let _ = logging::init();
+
+    tracing::info!("application starting");
+
+    let _settings = load_settings().expect("Failed to load config");
+
+    tracing::info!("config loaded");
+
+    let _connection = initialize_database().expect("Failed to initialize database");
+
+    tracing::info!("database initialized");
+
     let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
 
     app.run(move |cx| {
