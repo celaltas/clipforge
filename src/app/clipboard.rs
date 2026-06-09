@@ -1,49 +1,46 @@
-use crate::app::state::SharedAppState;
+use crate::service::clipboard_service::ClipboardService;
 use arboard::Clipboard;
+use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use uuid::Uuid;
+use std::time::Duration;
 
-pub struct ClipboardEntry {
-    pub id: String,
-    pub content: String,
-    pub created_at: i64,
+pub struct ClipboardListener {
+    service: Arc<ClipboardService>,
+    poll_interval: Duration,
 }
 
-pub fn start_clipboard_listener(state: SharedAppState) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let mut clipboard = Clipboard::new().expect("Failed to initialize clipboard");
-        let mut last_content = String::new();
-        tracing::info!("clipboard listener started");
+impl ClipboardListener {
+    pub fn new(service: Arc<ClipboardService>, poll_interval: Duration) -> Self {
+        Self {
+            service,
+            poll_interval,
+        }
+    }
 
-        loop {
-            match clipboard.get_text() {
-                Ok(new_content) => {
-                    if !new_content.is_empty() && new_content != last_content {
-                        let new_entry = ClipboardEntry {
-                            id: Uuid::now_v7().to_string(),
-                            content: new_content.clone(),
-                            created_at: SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs() as i64,
-                        };
-                        
-
-                        if let Err(e) = state.add_clipboard_entry(new_entry) {
-                            eprintln!("Failed to save clipboard entry: {}", e);
+    pub fn start(self) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            let mut clipboard = Clipboard::new().expect("Failed to initialize clipboard");
+            let mut last_content = String::new();
+            tracing::info!("clipboard listener started");
+            loop {
+                match clipboard.get_text() {
+                    Ok(new_content) => {
+                        if !new_content.is_empty() && new_content != last_content {
+                            let res = self.service.handle_clipboard_change(new_content.clone());
+                            if let Err(e) = res {
+                                eprintln!("Failed to handle clipboard change: {}", e);
+                            } else {
+                                tracing::info!("new content saved!");
+                                last_content = new_content;
+                            }
                         }
-                         tracing::info!("new content saved!");
-
-                        last_content = new_content;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to read clipboard: {}", e);
                     }
                 }
-                Err(e) => {
-                    eprintln!("Failed to read clipboard: {}", e);
-                }
+                thread::sleep(self.poll_interval);
             }
-
-            thread::sleep(Duration::from_millis(500));
-        }
-    })
+        })
+    }
 }
