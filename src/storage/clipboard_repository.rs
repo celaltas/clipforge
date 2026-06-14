@@ -1,4 +1,4 @@
-use crate::{service::clipboard_service::ClipboardEntry, storage::database::Database};
+use crate::storage::{database::Database, models::ClipboardEntry};
 use rusqlite::params;
 use std::sync::Arc;
 
@@ -11,13 +11,15 @@ impl ClipboardRepository {
         Self { database }
     }
 
-    pub fn insert(&self, entry: ClipboardEntry) -> anyhow::Result<()> {
+    pub fn insert(&self, entry: ClipboardEntry) -> anyhow::Result<i64> {
         self.database.run(|conn| {
             conn.execute(
-                "INSERT INTO clipboard_entries (id, content, created_at) VALUES (?1, ?2, ?3)",
-                params![entry.id, entry.content, entry.created_at],
+                "INSERT INTO clipboard_entries (content, content_type, created_at, pinned) VALUES (?1, ?2, ?3, ?4)",
+                params![entry.content, entry.content_type, entry.created_at, entry.pinned],
             )?;
-            Ok(())
+
+            let generated_id = conn.last_insert_rowid();
+            Ok(generated_id)
         })
     }
 
@@ -25,11 +27,11 @@ impl ClipboardRepository {
         self.database.run(|conn| {
             let (sql, params) = match limit {
                 Some(limit_val) => (
-                    "SELECT id, content, created_at FROM clipboard_entries ORDER BY created_at DESC LIMIT ?1",
+                    "SELECT id, content, content_type, created_at, pinned FROM clipboard_entries ORDER BY pinned DESC, created_at DESC LIMIT ?1",
                     params![limit_val as i64],
                 ),
                 None => (
-                    "SELECT id, content, created_at FROM clipboard_entries ORDER BY created_at DESC",
+                    "SELECT id, content, content_type, created_at, pinned FROM clipboard_entries ORDER BY pinned DESC, created_at DESC",
                     params![],
                 ),
             };
@@ -40,7 +42,9 @@ impl ClipboardRepository {
                     Ok(ClipboardEntry {
                         id: row.get(0)?,
                         content: row.get(1)?,
-                        created_at: row.get(2)?,
+                        content_type: row.get(2)?,
+                        created_at: row.get(3)?,
+                        pinned: row.get(4)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -49,7 +53,17 @@ impl ClipboardRepository {
         })
     }
 
-    pub fn delete(&self, id: &str) -> anyhow::Result<()> {
+    pub fn toggle_pin(&self, id: i64, is_pinned: bool) -> anyhow::Result<()> {
+        self.database.run(|conn| {
+            conn.execute(
+                "UPDATE clipboard_entries SET pinned = ?1 WHERE id = ?2",
+                params![is_pinned, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete(&self, id: i64) -> anyhow::Result<()> {
         self.database.run(|conn| {
             conn.execute("DELETE FROM clipboard_entries WHERE id = ?1", params![id])?;
             Ok(())
@@ -71,16 +85,18 @@ impl ClipboardRepository {
         })
     }
 
-    pub fn get_by_id(&self, id: &str) -> anyhow::Result<Option<ClipboardEntry>> {
+    pub fn get_by_id(&self, id: i64) -> anyhow::Result<Option<ClipboardEntry>> {
         self.database.run(|conn| {
             let mut stmt = conn
-                .prepare("SELECT id, content, created_at FROM clipboard_entries WHERE id = ?1")?;
+                .prepare("SELECT id, content, content_type, created_at, pinned FROM clipboard_entries WHERE id = ?1")?;
 
             let mut rows = stmt.query_map(params![id], |row| {
                 Ok(ClipboardEntry {
                     id: row.get(0)?,
                     content: row.get(1)?,
-                    created_at: row.get(2)?,
+                    content_type: row.get(2)?,
+                    created_at: row.get(3)?,
+                    pinned: row.get(4)?,
                 })
             })?;
 

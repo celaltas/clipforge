@@ -4,21 +4,17 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::{app::state::AppState, convert_to_ui_item};
+use crate::{
+    CopySelected, DeleteSelected, SelectNext, SelectPrevious, TogglePinSelected,
+    app::state::AppState,
+    ui::{ClipboardItemView, ItemType},
+};
 
 pub struct ClipboardWorkspace {
+    pub focus_handle: FocusHandle,
     pub search_input: Entity<InputState>,
     pub app_state: Entity<AppState>,
     pub selected_index: Option<usize>,
-}
-
-#[derive(Clone)]
-pub struct ClipboardItemView {
-    pub id: i64,
-    pub content_preview: String,
-    pub timestamp: String,
-    pub item_type: String,
-    pub full_content: String,
 }
 
 impl ClipboardWorkspace {
@@ -27,9 +23,61 @@ impl ClipboardWorkspace {
             cx.new(|cx| InputState::new(window, cx).placeholder("Search clipboard history..."));
 
         Self {
+            focus_handle: cx.focus_handle(),
             search_input,
             app_state,
-            selected_index: None,
+            selected_index: Some(0),
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+        let len = self.app_state.read(cx).get_items().len();
+        if len == 0 {
+            return;
+        }
+
+        let current = self.selected_index.unwrap_or(0);
+        self.selected_index = Some((current + 1).min(len - 1));
+
+        cx.notify();
+    }
+
+    fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
+        let current = self.selected_index.unwrap_or(0);
+        self.selected_index = Some(current.saturating_sub(1));
+        cx.notify();
+    }
+
+    fn copy_selected(&mut self, _: &CopySelected, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(idx) = self.selected_index {
+            let items = self.app_state.read(cx).get_items();
+
+            if let Some(item) = items.get(idx) {
+                println!("COPY: {}", item.id);
+            }
+        }
+    }
+    fn delete_selected(&mut self, _: &DeleteSelected, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(idx) = self.selected_index {
+            let items = self.app_state.read(cx).get_items();
+
+            if let Some(item) = items.get(idx) {
+                println!("DELETE: {}", item.id);
+            }
+        }
+    }
+    fn toggle_pin_selected(
+        &mut self,
+        _: &TogglePinSelected,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(idx) = self.selected_index {
+            let items = self.app_state.read(cx).get_items();
+
+            if let Some(item) = items.get(idx) {
+                println!("PIN: {}", item.id);
+            }
         }
     }
 }
@@ -37,12 +85,23 @@ impl ClipboardWorkspace {
 impl Render for ClipboardWorkspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entries = self.app_state.read(cx).get_items();
+
         let ui_items: Vec<ClipboardItemView> = entries
             .iter()
-            .map(|e| convert_to_ui_item(e.clone()))
+            .map(|e| ClipboardItemView::from(e)) // Sahiplik hatasını çözen köprü
             .collect();
 
         v_flex()
+            .key_context("ClipboardWorkspace")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::copy_selected))
+            .on_action(cx.listener(Self::delete_selected))
+            .on_action(cx.listener(Self::toggle_pin_selected))
+            .on_action(cx.listener(|_, _: &SelectNext, _, _| {
+                println!("SELECT NEXT ACTION RECEIVED");
+            }))
             .size_full()
             .bg(cx.theme().background)
             .child(
@@ -90,7 +149,11 @@ impl Render for ClipboardWorkspace {
                             .py_3()
                             .gap_3()
                             .rounded_md()
-                            .when(is_selected, |this| this.bg(cx.theme().accent_foreground))
+                            .when(is_selected, |this| {
+                                this.bg(cx.theme().info_hover)
+                                    .border_1()
+                                    .border_color(cx.theme().blue)
+                            })
                             .when(!is_selected, |this| {
                                 this.hover(|s| s.bg(cx.theme().info_hover))
                             })
@@ -102,15 +165,17 @@ impl Render for ClipboardWorkspace {
                                     .items_center()
                                     .justify_center()
                                     .text_lg()
-                                    .bg(match item.item_type.as_str() {
-                                        "image" => gpui::rgb(0xf59e0b),
-                                        "file" => gpui::rgb(0x8b5cf6),
-                                        _ => gpui::rgb(0x3b82f6),
+                                    .bg(match item.item_type {
+                                        ItemType::Image => gpui::rgb(0xf59e0b),
+                                        ItemType::File => gpui::rgb(0x8b5cf6),
+                                        ItemType::Link => gpui::rgb(0x10b981),
+                                        ItemType::Text => gpui::rgb(0x3b82f6),
                                     })
-                                    .child(match item.item_type.as_str() {
-                                        "image" => "🖼",
-                                        "file" => "📎",
-                                        _ => "📋",
+                                    .child(match item.item_type {
+                                        ItemType::Image => "🖼",
+                                        ItemType::File => "📎",
+                                        ItemType::Link => "🔗",
+                                        ItemType::Text => "📋",
                                     }),
                             )
                             .child(
@@ -124,10 +189,19 @@ impl Render for ClipboardWorkspace {
                                             .child(item.content_preview.clone()),
                                     )
                                     .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted)
-                                            .child(item.timestamp.clone()),
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().muted)
+                                                    .child(item.timestamp.clone()),
+                                            )
+                                            // UX: pinli kayıtlar listede hemen ayırt edilir
+                                            .when(item.pinned, |this| {
+                                                this.child(Icon::new(IconName::ThumbsUp).xsmall())
+                                            }),
                                     ),
                             )
                             .on_click(cx.listener(move |this, _, _, _| {
@@ -142,11 +216,18 @@ impl Render for ClipboardWorkspace {
                     .items_center()
                     .justify_between()
                     .text_sm()
-                    .text_color(cx.theme().muted)
+                    .text_color(cx.theme().blue)
                     .border_t_1()
                     .border_color(cx.theme().border)
                     .child(format!("{} items", ui_items.len()))
-                    .child("Ready • Press ↑↓ to navigate"),
+                    .child(
+                        h_flex()
+                            .gap_4()
+                            .child("↵ Copy")
+                            .child("⌘P Pin")
+                            .child("⌫ Delete")
+                            .child("↑↓ Navigate"),
+                    ),
             )
     }
 }

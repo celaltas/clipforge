@@ -1,4 +1,4 @@
-use crate::{config::settings::Settings, service::clipboard_service::ClipboardEntry};
+use crate::{config::settings::Settings, storage::models::ClipboardEntry};
 use gpui::*;
 
 pub struct AppState {

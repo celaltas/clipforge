@@ -14,7 +14,7 @@ impl Default for Settings {
         Self {
             window_width: 1000,
             window_height: 700,
-            max_history_items: 500,
+            max_history_items: 10,
             poll_interval: 1000,
         }
     }

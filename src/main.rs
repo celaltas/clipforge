@@ -6,7 +6,7 @@ mod storage;
 mod ui;
 
 use config::loader::load_settings;
-use gpui::{AppContext, WindowOptions};
+use gpui::{AppContext, KeyBinding, WindowOptions, actions};
 use gpui_component::Root;
 use std::sync::Arc;
 
@@ -14,8 +14,19 @@ use crate::{
     app::{clipboard::ClipboardListener, event::AppEvent, state::AppState},
     service::clipboard_service::ClipboardService,
     storage::{clipboard_repository::ClipboardRepository, database::Database},
-    ui::workspace::{ClipboardItemView, ClipboardWorkspace},
+    ui::workspace::ClipboardWorkspace,
 };
+
+actions!(
+    clipboard_workspace,
+    [
+        SelectNext,
+        SelectPrevious,
+        CopySelected,
+        DeleteSelected,
+        TogglePinSelected,
+    ]
+);
 
 fn main() {
     let _ = logging::init();
@@ -33,14 +44,12 @@ fn main() {
 
     let clipboard_repository = ClipboardRepository::new(database.clone());
 
-    let mut initial_items = clipboard_repository
+    let initial_items = clipboard_repository
         .get_latest(Some(settings.max_history_items))
         .unwrap_or_else(|e| {
             tracing::error!("Failed to load initial history: {}", e);
             Vec::new()
         });
-
-    initial_items.reverse();
 
     let (event_sender, event_receiver) = flume::unbounded::<AppEvent>();
 
@@ -50,13 +59,22 @@ fn main() {
     clipboard_listener.start();
 
     gpui_platform::application().run(move |cx| {
+        cx.bind_keys([
+            KeyBinding::new("down", SelectNext, None),
+            KeyBinding::new("up", SelectPrevious, None),
+            KeyBinding::new("enter", CopySelected, None),
+            KeyBinding::new("backspace", DeleteSelected, None),
+            KeyBinding::new("cmd-p", TogglePinSelected, None),
+        ]);
         gpui_component::init(cx);
 
         let app_state = cx.new(|_| AppState::new(settings, initial_items));
 
         cx.open_window(WindowOptions::default(), |window, cx| {
             let workspace = cx.new(|cx| ClipboardWorkspace::new(window, cx, app_state.clone()));
-
+            workspace.update(cx, |this, cx| {
+                this.focus_handle.focus(window, cx);
+            });
             cx.spawn(async move |cx| {
                 while let Ok(event) = event_receiver.recv_async().await {
                     match event {
@@ -75,49 +93,4 @@ fn main() {
         })
         .expect("Failed to open window");
     });
-}
-
-fn format_time_ago(created_at: i64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-
-    let diff = now - created_at;
-
-    if diff < 60 {
-        "Şimdi".to_string()
-    } else if diff < 3600 {
-        format!("{} dk önce", diff / 60)
-    } else if diff < 86400 {
-        format!("{} saat önce", diff / 3600)
-    } else {
-        format!("{} gün önce", diff / 86400)
-    }
-}
-
-fn convert_to_ui_item(
-    entry: crate::service::clipboard_service::ClipboardEntry,
-) -> ClipboardItemView {
-    let preview = if entry.content.len() > 120 {
-        format!("{}...", &entry.content[..120])
-    } else {
-        entry.content.clone()
-    };
-
-    let item_type = if entry.content.starts_with("http") || entry.content.contains("://") {
-        "text".to_string()
-    } else if entry.content.contains("data:image") || entry.content.len() > 500 {
-        "image".to_string()
-    } else {
-        "text".to_string()
-    };
-
-    ClipboardItemView {
-        id: entry.id.parse::<i64>().unwrap_or(0),
-        content_preview: preview,
-        timestamp: format_time_ago(entry.created_at),
-        item_type,
-        full_content: entry.content,
-    }
 }

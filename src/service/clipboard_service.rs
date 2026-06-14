@@ -1,14 +1,12 @@
-use crate::{app::event::AppEvent, storage::clipboard_repository::ClipboardRepository};
+use crate::{
+    app::event::AppEvent,
+    storage::{
+        clipboard_repository::ClipboardRepository,
+        models::{ClipboardContentType, ClipboardEntry},
+    },
+};
 use flume::Sender;
 use std::time::{SystemTime, UNIX_EPOCH};
-use uuid::Uuid;
-
-#[derive(Debug, Clone)]
-pub struct ClipboardEntry {
-    pub id: String,
-    pub content: String,
-    pub created_at: i64,
-}
 
 pub struct ClipboardService {
     repo: ClipboardRepository,
@@ -33,19 +31,29 @@ impl ClipboardService {
                 return Ok(());
             }
         }
-        let entry = ClipboardEntry {
-            id: Uuid::now_v7().to_string(),
+        let entry_to_insert = ClipboardEntry {
+            id: 0,
             content: content.clone(),
+            content_type: ClipboardContentType::Text,
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as i64,
+            pinned: false,
         };
 
-        match self.repo.insert(entry.clone()) {
-            Ok(_) => {
-                tracing::info!("Saved: {}", content);
-                let _ = self.event_sender.send(AppEvent::ClipboardSaved(entry));
+        match self.repo.insert(entry_to_insert.clone()) {
+            Ok(generated_id) => {
+                tracing::info!("Saved with ID: {}", generated_id);
+
+                let final_entry = ClipboardEntry {
+                    id: generated_id,
+                    ..entry_to_insert
+                };
+
+                let _ = self
+                    .event_sender
+                    .send(AppEvent::ClipboardSaved(final_entry));
                 Ok(())
             }
             Err(e) => {
