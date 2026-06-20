@@ -14,11 +14,8 @@ impl AppState {
         }
     }
 
-    pub fn add_item(&mut self, entry: ClipboardEntry, cx: &mut Context<Self>) {
-        if self.clipboard_items.len() >= self.settings.max_history_items {
-            self.clipboard_items.remove(0);
-        }
-        self.clipboard_items.push(entry);
+    pub fn set_items(&mut self, items: Vec<ClipboardEntry>, cx: &mut Context<Self>) {
+        self.clipboard_items = items;
         cx.notify();
     }
 

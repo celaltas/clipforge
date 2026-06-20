@@ -11,7 +11,11 @@ use gpui_component::Root;
 use std::sync::Arc;
 
 use crate::{
-    app::{clipboard::ClipboardListener, event::AppEvent, state::AppState},
+    app::{
+        clipboard::ClipboardListener,
+        event::{AppEvent, UiAction},
+        state::AppState,
+    },
     service::clipboard_service::ClipboardService,
     storage::{clipboard_repository::ClipboardRepository, database::Database},
     ui::workspace::ClipboardWorkspace,
@@ -52,9 +56,10 @@ fn main() {
         });
 
     let (event_sender, event_receiver) = flume::unbounded::<AppEvent>();
+    let (action_sender, action_receiver) = flume::unbounded::<UiAction>();
 
     let clipboard_service = Arc::new(ClipboardService::new(event_sender, clipboard_repository));
-    let clipboard_listener = ClipboardListener::new(clipboard_service, listener_interval);
+    let clipboard_listener = ClipboardListener::new(clipboard_service.clone(), listener_interval);
 
     clipboard_listener.start();
 
@@ -71,16 +76,40 @@ fn main() {
         let app_state = cx.new(|_| AppState::new(settings, initial_items));
 
         cx.open_window(WindowOptions::default(), |window, cx| {
-            let workspace = cx.new(|cx| ClipboardWorkspace::new(window, cx, app_state.clone()));
+            let workspace = cx.new(|cx| {
+                ClipboardWorkspace::new(window, cx, app_state.clone(), action_sender.clone())
+            });
             workspace.update(cx, |this, cx| {
                 this.focus_handle.focus(window, cx);
             });
+
+            let service_clone = clipboard_service.clone();
+
+            cx.spawn(async move |cx| {
+                while let Ok(action) = action_receiver.recv_async().await {
+                    let service = service_clone.clone();
+                    match action {
+                        UiAction::TogglePin(id, is_pinned) => {
+                            if let Err(e) = service.toggle_pin(id, is_pinned) {
+                                tracing::error!("Failed to pin entry: {}", e);
+                            }
+                        }
+                        UiAction::Delete(id) => {
+                            if let Err(e) = service.delete_entry(id) {
+                                tracing::error!("Failed to delete entry: {}", e);
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+            })
+            .detach();
             cx.spawn(async move |cx| {
                 while let Ok(event) = event_receiver.recv_async().await {
                     match event {
-                        AppEvent::ClipboardSaved(entry) => {
+                        AppEvent::HistoryUpdated(fresh_items) => {
                             app_state.update(cx, |state, cx| {
-                                state.add_item(entry, cx);
+                                state.set_items(fresh_items, cx);
                             });
                         }
                         _ => (),

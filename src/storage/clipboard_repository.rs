@@ -63,7 +63,7 @@ impl ClipboardRepository {
         })
     }
 
-    pub fn delete(&self, id: i64) -> anyhow::Result<()> {
+    pub fn delete_entry(&self, id: i64) -> anyhow::Result<()> {
         self.database.run(|conn| {
             conn.execute("DELETE FROM clipboard_entries WHERE id = ?1", params![id])?;
             Ok(())

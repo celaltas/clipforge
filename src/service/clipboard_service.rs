@@ -42,25 +42,31 @@ impl ClipboardService {
             pinned: false,
         };
 
-        match self.repo.insert(entry_to_insert.clone()) {
-            Ok(generated_id) => {
-                tracing::info!("Saved with ID: {}", generated_id);
+        self.repo.insert(entry_to_insert)?;
 
-                let final_entry = ClipboardEntry {
-                    id: generated_id,
-                    ..entry_to_insert
-                };
+        let fresh_items = self.repo.get_latest(Some(10))?;
+        let _ = self
+            .event_sender
+            .send(AppEvent::HistoryUpdated(fresh_items));
+        Ok(())
+    }
 
-                let _ = self
-                    .event_sender
-                    .send(AppEvent::ClipboardSaved(final_entry));
-                Ok(())
-            }
-            Err(e) => {
-                tracing::error!("DB error, skipped memory update: {}", e);
-                Err(e)
-            }
-        }
+    pub fn toggle_pin(&self, id: i64, is_pinned: bool) -> anyhow::Result<()> {
+        self.repo.toggle_pin(id, is_pinned)?;
+        let fresh_items = self.repo.get_latest(Some(10))?;
+        let _ = self
+            .event_sender
+            .send(AppEvent::HistoryUpdated(fresh_items));
+        Ok(())
+    }
+
+    pub fn delete_entry(&self, id: i64) -> anyhow::Result<()> {
+        self.repo.delete_entry(id)?;
+        let fresh_items = self.repo.get_latest(Some(10))?;
+        let _ = self
+            .event_sender
+            .send(AppEvent::HistoryUpdated(fresh_items));
+        Ok(())
     }
 }
 

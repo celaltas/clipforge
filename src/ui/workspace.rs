@@ -6,7 +6,7 @@ use gpui_component::{
 
 use crate::{
     CopySelected, DeleteSelected, SelectNext, SelectPrevious, TogglePinSelected,
-    app::state::AppState,
+    app::{event::UiAction, state::AppState},
     ui::{ClipboardItemView, ItemType},
 };
 
@@ -15,10 +15,16 @@ pub struct ClipboardWorkspace {
     pub search_input: Entity<InputState>,
     pub app_state: Entity<AppState>,
     pub selected_index: Option<usize>,
+    pub action_sender: flume::Sender<UiAction>,
 }
 
 impl ClipboardWorkspace {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>, app_state: Entity<AppState>) -> Self {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        app_state: Entity<AppState>,
+        action_sender: flume::Sender<UiAction>,
+    ) -> Self {
         let search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search clipboard history..."));
 
@@ -27,6 +33,7 @@ impl ClipboardWorkspace {
             search_input,
             app_state,
             selected_index: Some(0),
+            action_sender,
         }
     }
 
@@ -62,7 +69,10 @@ impl ClipboardWorkspace {
             let items = self.app_state.read(cx).get_items();
 
             if let Some(item) = items.get(idx) {
-                println!("DELETE: {}", item.id);
+                let _ = self.action_sender.send(UiAction::Delete(item.id));
+                if idx >= items.len().saturating_sub(1) && idx > 0 {
+                    self.selected_index = Some(idx - 1);
+                }
             }
         }
     }
@@ -76,7 +86,9 @@ impl ClipboardWorkspace {
             let items = self.app_state.read(cx).get_items();
 
             if let Some(item) = items.get(idx) {
-                println!("PIN: {}", item.id);
+                let _ = self
+                    .action_sender
+                    .send(UiAction::TogglePin(item.id, !item.pinned));
             }
         }
     }
@@ -99,9 +111,6 @@ impl Render for ClipboardWorkspace {
             .on_action(cx.listener(Self::copy_selected))
             .on_action(cx.listener(Self::delete_selected))
             .on_action(cx.listener(Self::toggle_pin_selected))
-            .on_action(cx.listener(|_, _: &SelectNext, _, _| {
-                println!("SELECT NEXT ACTION RECEIVED");
-            }))
             .size_full()
             .bg(cx.theme().background)
             .child(
@@ -155,7 +164,8 @@ impl Render for ClipboardWorkspace {
                                     .border_color(cx.theme().blue)
                             })
                             .when(!is_selected, |this| {
-                                this.hover(|s| s.bg(cx.theme().info_hover))
+                                this.when(item.pinned, |this| this.bg(cx.theme().info_hover)) // Pinli olanlara hafif arka plan tonu
+                                            .hover(|s| s.bg(cx.theme().info_hover))
                             })
                             .child(
                                 div()
@@ -188,21 +198,13 @@ impl Render for ClipboardWorkspace {
                                             .line_clamp(2)
                                             .child(item.content_preview.clone()),
                                     )
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted)
-                                                    .child(item.timestamp.clone()),
-                                            )
-                                            // UX: pinli kayıtlar listede hemen ayırt edilir
-                                            .when(item.pinned, |this| {
-                                                this.child(Icon::new(IconName::ThumbsUp).xsmall())
-                                            }),
-                                    ),
+                                    .when(item.pinned, |this| {
+                                        this.child(
+                                            Icon::new(IconName::Ellipsis)
+                                                .small()
+                                                .text_color(cx.theme().blue),
+                                        )
+                                    }),
                             )
                             .on_click(cx.listener(move |this, _, _, _| {
                                 this.selected_index = Some(idx);
