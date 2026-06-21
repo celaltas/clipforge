@@ -23,22 +23,16 @@ impl ClipboardRepository {
         })
     }
 
-    pub fn get_latest(&self, limit: Option<usize>) -> anyhow::Result<Vec<ClipboardEntry>> {
+    pub fn get_latest(&self, limit: usize, offset: usize) -> anyhow::Result<Vec<ClipboardEntry>> {
         self.database.run(|conn| {
-            let (sql, params) = match limit {
-                Some(limit_val) => (
-                    "SELECT id, content, content_type, created_at, pinned FROM clipboard_entries ORDER BY pinned DESC, created_at DESC LIMIT ?1",
-                    params![limit_val as i64],
-                ),
-                None => (
-                    "SELECT id, content, content_type, created_at, pinned FROM clipboard_entries ORDER BY pinned DESC, created_at DESC",
-                    params![],
-                ),
-            };
+            let sql = "SELECT id, content, content_type, created_at, pinned \
+                       FROM clipboard_entries \
+                       ORDER BY pinned DESC, created_at DESC \
+                       LIMIT ?1 OFFSET ?2";
 
             let mut stmt = conn.prepare(sql)?;
             let entries = stmt
-                .query_map(params, |row| {
+                .query_map(params![limit as i64, offset as i64], |row| {
                     Ok(ClipboardEntry {
                         id: row.get(0)?,
                         content: row.get(1)?,
@@ -47,6 +41,43 @@ impl ClipboardRepository {
                         pinned: row.get(4)?,
                     })
                 })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            Ok(entries)
+        })
+    }
+
+    pub fn search_entries(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> anyhow::Result<Vec<ClipboardEntry>> {
+        self.database.run(|conn| {
+            let sql = "SELECT e.id, e.content, e.content_type, e.created_at, e.pinned 
+                            FROM clipboard_entries e 
+                            JOIN clipboard_entries_fts fts ON e.id = fts.id 
+                            WHERE fts.content MATCH ?1 
+                            ORDER BY e.pinned DESC, fts.rank ASC, e.created_at DESC 
+                            LIMIT ?2 OFFSET ?3";
+
+            let mut stmt = conn.prepare(sql)?;
+
+            let formatted_query = format!("{}*", query.trim());
+
+            let entries = stmt
+                .query_map(
+                    params![formatted_query, limit as i64, offset as i64],
+                    |row| {
+                        Ok(ClipboardEntry {
+                            id: row.get(0)?,
+                            content: row.get(1)?,
+                            content_type: row.get(2)?,
+                            created_at: row.get(3)?,
+                            pinned: row.get(4)?,
+                        })
+                    },
+                )?
                 .collect::<Result<Vec<_>, _>>()?;
 
             Ok(entries)

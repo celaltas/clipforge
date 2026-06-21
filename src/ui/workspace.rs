@@ -28,6 +28,13 @@ impl ClipboardWorkspace {
         let search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search clipboard history..."));
 
+        let sender_clone = action_sender.clone();
+        cx.observe(&search_input, move |this, state, cx| {
+            let text = state.read(cx).value().to_string();
+            let _ = sender_clone.send(UiAction::Search(text));
+        })
+        .detach();
+
         Self {
             focus_handle: cx.focus_handle(),
             search_input,
@@ -98,10 +105,8 @@ impl Render for ClipboardWorkspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entries = self.app_state.read(cx).get_items();
 
-        let ui_items: Vec<ClipboardItemView> = entries
-            .iter()
-            .map(|e| ClipboardItemView::from(e)) // Sahiplik hatasını çözen köprü
-            .collect();
+        let ui_items: Vec<ClipboardItemView> =
+            entries.iter().map(ClipboardItemView::from).collect();
 
         v_flex()
             .key_context("ClipboardWorkspace")
@@ -119,7 +124,6 @@ impl Render for ClipboardWorkspace {
                     .px_4()
                     .gap_3()
                     .items_center()
-                    .border_b_1()
                     .border_color(cx.theme().border)
                     .child(
                         div().w_full().max_w_96().child(

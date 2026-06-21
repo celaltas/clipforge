@@ -6,7 +6,7 @@ mod storage;
 mod ui;
 
 use config::loader::load_settings;
-use gpui::{AppContext, KeyBinding, WindowOptions, actions};
+use gpui::{AppContext, Focusable, KeyBinding, WindowOptions, actions};
 use gpui_component::Root;
 use std::sync::Arc;
 
@@ -49,7 +49,7 @@ fn main() {
     let clipboard_repository = ClipboardRepository::new(database.clone());
 
     let initial_items = clipboard_repository
-        .get_latest(Some(settings.max_history_items))
+        .get_latest(settings.max_history_items, 0)
         .unwrap_or_else(|e| {
             tracing::error!("Failed to load initial history: {}", e);
             Vec::new()
@@ -67,7 +67,7 @@ fn main() {
         cx.bind_keys([
             KeyBinding::new("down", SelectNext, None),
             KeyBinding::new("up", SelectPrevious, None),
-            KeyBinding::new("enter", CopySelected, None),
+            KeyBinding::new("cmd-c", CopySelected, None),
             KeyBinding::new("backspace", DeleteSelected, None),
             KeyBinding::new("cmd-p", TogglePinSelected, None),
         ]);
@@ -80,12 +80,12 @@ fn main() {
                 ClipboardWorkspace::new(window, cx, app_state.clone(), action_sender.clone())
             });
             workspace.update(cx, |this, cx| {
-                this.focus_handle.focus(window, cx);
+                this.search_input.focus_handle(cx).focus(window, cx);
             });
 
             let service_clone = clipboard_service.clone();
 
-            cx.spawn(async move |cx| {
+            cx.spawn(async move |_cx| {
                 while let Ok(action) = action_receiver.recv_async().await {
                     let service = service_clone.clone();
                     match action {
@@ -99,7 +99,11 @@ fn main() {
                                 tracing::error!("Failed to delete entry: {}", e);
                             }
                         }
-                        _ => (),
+                        UiAction::Search(query) => {
+                            if let Err(e) = service.search(query) {
+                                tracing::error!("Failed to execute search: {}", e);
+                            }
+                        }
                     }
                 }
             })
@@ -112,7 +116,6 @@ fn main() {
                                 state.set_items(fresh_items, cx);
                             });
                         }
-                        _ => (),
                     }
                 }
             })

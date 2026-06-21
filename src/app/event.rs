@@ -2,7 +2,6 @@ use crate::storage::models::ClipboardEntry;
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
-    ClipboardSaved(ClipboardEntry),
     HistoryUpdated(Vec<ClipboardEntry>),
 }
 
@@ -10,4 +9,5 @@ pub enum AppEvent {
 pub enum UiAction {
     TogglePin(i64, bool),
     Delete(i64),
+    Search(String)
 }

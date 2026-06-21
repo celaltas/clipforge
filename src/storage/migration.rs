@@ -10,12 +10,12 @@ struct MigrationFile {
 }
 
 pub fn run_migrations(connection: &mut Connection) -> anyhow::Result<()> {
-    ensure_migration_table(&connection)?;
+    ensure_migration_table(connection)?;
 
     let mut migration_files = load_migration_files()?;
     sort_migration_files(&mut migration_files);
 
-    let applied_migrations = get_applied_migrations(&connection)?;
+    let applied_migrations = get_applied_migrations(connection)?;
 
     let pending_migrations: Vec<MigrationFile> =
         get_pending_migrations(migration_files, applied_migrations);

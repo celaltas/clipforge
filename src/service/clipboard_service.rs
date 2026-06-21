@@ -25,11 +25,11 @@ impl ClipboardService {
             return Ok(());
         }
 
-        let last = self.repo.get_latest(Some(1))?;
-        if let Some(prev) = last.first() {
-            if prev.content == content {
-                return Ok(());
-            }
+        let last = self.repo.get_latest(1,0)?;
+        if let Some(prev) = last.first()
+            && prev.content == content
+        {
+            return Ok(());
         }
         let entry_to_insert = ClipboardEntry {
             id: 0,
@@ -44,7 +44,7 @@ impl ClipboardService {
 
         self.repo.insert(entry_to_insert)?;
 
-        let fresh_items = self.repo.get_latest(Some(10))?;
+        let fresh_items = self.repo.get_latest(100, 0)?;
         let _ = self
             .event_sender
             .send(AppEvent::HistoryUpdated(fresh_items));
@@ -53,7 +53,7 @@ impl ClipboardService {
 
     pub fn toggle_pin(&self, id: i64, is_pinned: bool) -> anyhow::Result<()> {
         self.repo.toggle_pin(id, is_pinned)?;
-        let fresh_items = self.repo.get_latest(Some(10))?;
+        let fresh_items = self.repo.get_latest(100, 0)?;
         let _ = self
             .event_sender
             .send(AppEvent::HistoryUpdated(fresh_items));
@@ -62,7 +62,20 @@ impl ClipboardService {
 
     pub fn delete_entry(&self, id: i64) -> anyhow::Result<()> {
         self.repo.delete_entry(id)?;
-        let fresh_items = self.repo.get_latest(Some(10))?;
+        let fresh_items = self.repo.get_latest(100, 0)?;
+        let _ = self
+            .event_sender
+            .send(AppEvent::HistoryUpdated(fresh_items));
+        Ok(())
+    }
+
+    pub fn search(&self, query: String) -> anyhow::Result<()> {
+        let fresh_items = if query.trim().is_empty() {
+            self.repo.get_latest(100, 0)?
+        } else {
+            self.repo.search_entries(&query, 100, 0)?
+        };
+
         let _ = self
             .event_sender
             .send(AppEvent::HistoryUpdated(fresh_items));
@@ -72,6 +85,5 @@ impl ClipboardService {
 
 fn normalize(raw: String) -> String {
     let trimmed = raw.trim().to_string();
-    let collapsed = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
-    collapsed
+    trimmed.split_whitespace().collect::<Vec<_>>().join(" ")
 }
